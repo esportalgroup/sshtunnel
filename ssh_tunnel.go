@@ -21,6 +21,7 @@ type SSHTunnel struct {
 	SvrConns              []*ssh.Client
 	MaxConnectionAttempts int
 	isOpen                bool
+	listener              net.Listener
 	close                 chan interface{}
 }
 
@@ -38,13 +39,27 @@ func newConnectionWaiter(listener net.Listener, c chan net.Conn) {
 	c <- conn
 }
 
-func (tunnel *SSHTunnel) Start() error {
+func (tunnel *SSHTunnel) Initialize() error {
 	listener, err := net.Listen("tcp", tunnel.Local.String())
 	if err != nil {
 		return err
 	}
+
 	tunnel.isOpen = true
+	tunnel.listener = listener
 	tunnel.Local.Port = listener.Addr().(*net.TCPAddr).Port
+
+	return nil
+}
+
+func (tunnel *SSHTunnel) Start() error {
+	if tunnel.listener == nil {
+		if err := tunnel.Initialize(); err != nil {
+			return err
+		}
+	}
+
+	var listener = tunnel.listener
 
 	// Ensure that MaxConnectionAttempts is at least 1. This check is done here
 	// since the library user can set the value at any point before Start() is called,
@@ -67,6 +82,7 @@ func (tunnel *SSHTunnel) Start() error {
 		case <-tunnel.close:
 			tunnel.logf("close signal received, closing...")
 			tunnel.isOpen = false
+			tunnel.listener = nil
 		case conn := <-c:
 			tunnel.Conns = append(tunnel.Conns, conn)
 			tunnel.logf("accepted connection")
@@ -90,7 +106,7 @@ func (tunnel *SSHTunnel) Start() error {
 			tunnel.logf(err.Error())
 		}
 	}
-	err = listener.Close()
+	err := listener.Close()
 	if err != nil {
 		return err
 	}
